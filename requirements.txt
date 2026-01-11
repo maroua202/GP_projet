@@ -1,8 +1,8 @@
-streamlit
-torch
-numpy
-pandas
-matplotlib
-yfinance
-plotly
-scipy
+streamlit>=1.28.0
+torch>=2.0.0
+numpy>=1.24.0
+pandas>=2.0.0
+matplotlib>=3.7.0
+plotly>=5.14.0
+scipy>=1.10.0
+requests>=2.31.0

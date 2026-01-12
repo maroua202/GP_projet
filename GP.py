@@ -128,9 +128,327 @@ def generate_efficient_frontier(rendements_moyens, matrice_cov, risk_free_rate, 
 
     return rendements_portfolios, volatilites_portfolios, ratios_sharpe, all_weights
 
+# ==================== FONCTION POUR AFFICHER LES RESULTATS ====================
+def display_results():
+    if not st.session_state.optimization_results:
+        return
+        
+    results = st.session_state.optimization_results
+    tickers = results['tickers']
+    years = results['years']
+    risk_free_rate = results['risk_free_rate']
+    confidence_level = results['confidence_level']
+    daily_returns = results['daily_returns']
+    rendements_moyens = results['rendements_moyens']
+    matrice_cov = results['matrice_cov']
+    poids_opt = results['poids_opt']
+    sharpe_opt = results['sharpe_opt']
+    rendement = results['rendement']
+    volatilite = results['volatilite']
+    var_1d = results['var_1d']
+    tvar_1d = results['tvar_1d']
+    
+    # ==================== AFFICHAGE DES RÉSULTATS ====================
+    st.success("Optimisation terminée!")
+    
+    # Métriques principales
+    col1, col2, col3, col4, col5 = st.columns(5)
+    
+    with col1:
+        st.metric("Sharpe Ratio", f"{sharpe_opt:.4f}")
+    with col2:
+        st.metric("Rendement annuel", f"{rendement*100:.2f}%")
+    with col3:
+        st.metric("Volatilité annuelle", f"{volatilite*100:.2f}%")
+    with col4:
+        st.metric(f"VaR ({confidence_level*100:.0f}%) 1 jour", f"{var_1d*100:.2f}%")
+    with col5:
+        st.metric(f"TVaR ({confidence_level*100:.0f}%) 1 jour", f"{tvar_1d*100:.2f}%")
+    
+    st.markdown("---")
+    
+    # Layout en colonnes
+    left_col, right_col = st.columns([1, 1])
+    
+    with left_col:
+        # Tableau des poids
+        st.subheader(" Distribution du portefeuille")
+        
+        weights_df = pd.DataFrame({
+            'Actif': tickers,
+            'Poids (%)': poids_opt * 100,
+            'Rendement (%)': rendements_moyens.values * 100
+        })
+        
+        # Trier par poids décroissant
+        weights_df = weights_df.sort_values('Poids (%)', ascending=False)
+        
+        # Afficher le tableau
+        st.dataframe(
+            weights_df.style.format({
+                'Poids (%)': '{:.2f}%',
+                'Rendement (%)': '{:.2f}%'
+            }),
+            use_container_width=True
+        )
+        
+        # Pie chart avec Plotly
+        st.subheader(" Répartition du portefeuille")
+        
+        fig_pie = px.pie(
+            weights_df,
+            values='Poids (%)',
+            names='Actif',
+            hole=0.3,
+            color_discrete_sequence=px.colors.qualitative.Set3
+        )
+        fig_pie.update_traces(textposition='inside', textinfo='percent+label')
+        fig_pie.update_layout(height=400)
+        st.plotly_chart(fig_pie, use_container_width=True)
+    
+    with right_col:
+        # Efficient Frontier avec Plotly
+        st.subheader("Frontière Efficiente")
+        
+        with st.spinner("Génération de la frontière efficiente..."):
+            rendements_pf, volatilites_pf, sharpes_pf, all_weights = generate_efficient_frontier(
+                rendements_moyens.values,
+                matrice_cov.values,
+                risk_free_rate,
+                n_portfolios=3000
+            )
+        
+        # Création du scatter plot
+        fig = go.Figure()
+        
+        # Tous les portefeuilles
+        fig.add_trace(go.Scatter(
+            x=volatilites_pf,
+            y=rendements_pf,
+            mode='markers',
+            marker=dict(
+                size=8,
+                color=sharpes_pf,
+                colorscale='Viridis',
+                showscale=True,
+                colorbar=dict(title="Sharpe Ratio")
+            ),
+            name='Portefeuilles aléatoires',
+            hovertemplate='<b>Volatilité:</b> %{x:.3f}<br>' +
+                         '<b>Rendement:</b> %{y:.3f}<br>' +
+                         '<b>Sharpe:</b> %{marker.color:.3f}<extra></extra>'
+        ))
+        
+        # Portefeuille optimal (DL)
+        fig.add_trace(go.Scatter(
+            x=[volatilite],
+            y=[rendement],
+            mode='markers',
+            marker=dict(
+                size=20,
+                color='red',
+                symbol='star',
+                line=dict(width=2, color='black')
+            ),
+            name='Portefeuille Optimal (DL)',
+            hovertemplate='<b>Portefeuille Optimal</b><br>' +
+                         '<b>Volatilité:</b> %{x:.3f}<br>' +
+                         '<b>Rendement:</b> %{y:.3f}<br>' +
+                         '<b>Sharpe:</b> ' + f'{sharpe_opt:.3f}<extra></extra>'
+        ))
+        
+        # Portefeuille à volatilité minimale
+        idx_min_vol = np.argmin(volatilites_pf)
+        fig.add_trace(go.Scatter(
+            x=[volatilites_pf[idx_min_vol]],
+            y=[rendements_pf[idx_min_vol]],
+            mode='markers',
+            marker=dict(
+                size=15,
+                color='green',
+                symbol='triangle-up',
+                line=dict(width=2, color='black')
+            ),
+            name='Volatilité minimale',
+            hovertemplate='<b>Volatilité minimale</b><br>' +
+                         '<b>Volatilité:</b> %{x:.3f}<br>' +
+                         '<b>Rendement:</b> %{y:.3f}<extra></extra>'
+        ))
+        
+        # Portefeuille à Sharpe maximum (Monte Carlo)
+        idx_max_sharpe = np.argmax(sharpes_pf)
+        fig.add_trace(go.Scatter(
+            x=[volatilites_pf[idx_max_sharpe]],
+            y=[rendements_pf[idx_max_sharpe]],
+            mode='markers',
+            marker=dict(
+                size=15,
+                color='blue',
+                symbol='square',
+                line=dict(width=2, color='black')
+            ),
+            name='Sharpe max (MC)',
+            hovertemplate='<b>Sharpe max (MC)</b><br>' +
+                         '<b>Volatilité:</b> %{x:.3f}<br>' +
+                         '<b>Rendement:</b> %{y:.3f}<extra></extra>'
+        ))
+        
+        # Mise en forme
+        fig.update_layout(
+            title='Frontière Efficiente',
+            xaxis_title='Volatilité annuelle',
+            yaxis_title='Rendement annuel',
+            hovermode='closest',
+            height=500,
+            showlegend=True,
+            legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01)
+        )
+        
+        st.plotly_chart(fig, use_container_width=True)
+    
+    # Section supplémentaire : Distribution des rendements et VaR
+    st.markdown("---")
+    st.subheader("Analyse des risques")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        # Distribution des rendements du portefeuille
+        portfolio_returns = daily_returns.values @ poids_opt
+        
+        fig_dist = go.Figure()
+        fig_dist.add_trace(go.Histogram(
+            x=portfolio_returns * 100,
+            nbinsx=50,
+            name='Rendements',
+            marker_color='skyblue',
+            opacity=0.7
+        ))
+        
+        # Ligne VaR
+        fig_dist.add_vline(
+            x=var_1d * 100,
+            line_dash="dash",
+            line_color="red",
+            annotation_text=f"VaR {confidence_level*100:.0f}%: {var_1d*100:.2f}%",
+            annotation_position="top right"
+        )
+        
+        fig_dist.update_layout(
+            title='Distribution des rendements quotidiens',
+            xaxis_title='Rendement quotidien (%)',
+            yaxis_title='Fréquence',
+            height=400
+        )
+        st.plotly_chart(fig_dist, use_container_width=True)
+    
+    with col2:
+        # Matrice de corrélation
+        st.subheader(" Matrice de corrélation")
+        
+        corr_matrix = daily_returns.corr()
+        
+        fig_corr = px.imshow(
+            corr_matrix,
+            text_auto='.2f',
+            aspect="auto",
+            color_continuous_scale='RdBu_r',
+            zmin=-1,
+            zmax=1
+        )
+        fig_corr.update_layout(height=400)
+        st.plotly_chart(fig_corr, use_container_width=True)
+    
+    # Téléchargement des résultats - SANS déclencher de rechargement
+    st.markdown("---")
+    st.subheader("Exporter les résultats")
+    
+    # Créer un DataFrame avec tous les résultats
+    results_df = pd.DataFrame({
+        'Asset': tickers,
+        'Weight': poids_opt,
+        'Weight_%': poids_opt * 100,
+        'Annual_Return_%': rendements_moyens.values * 100,
+        'Risk_Contribution_%': (poids_opt * np.diag(matrice_cov.values) / volatilite**2) * 100
+    })
+    
+    # Métriques globales
+    summary_metrics = pd.DataFrame({
+        'Metric': ['Sharpe Ratio', 'Annual Return %', 'Annual Volatility %', 
+                  f'VaR 1d ({confidence_level*100:.0f}%)', f'TVaR 1d ({confidence_level*100:.0f}%)',
+                  'Number of Assets', 'Investment Period (years)'],
+        'Value': [sharpe_opt, rendement*100, volatilite*100, 
+                 var_1d*100, tvar_1d*100, len(tickers), years]
+    })
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        # Utiliser st.download_button normalement - les résultats sont déjà dans session_state
+        st.download_button(
+            label=" Télécharger les poids",
+            data=results_df.to_csv(index=False),
+            file_name="portfolio_weights.csv",
+            mime="text/csv",
+            key="download_weights_unique"  # Clé unique
+        )
+    
+    with col2:
+        st.download_button(
+            label="Télécharger les métriques",
+            data=summary_metrics.to_csv(index=False),
+            file_name="portfolio_metrics.csv",
+            mime="text/csv",
+            key="download_metrics_unique"  # Clé unique
+        )
+    
+    with col3:
+        # Utiliser un callback pour le rapport
+        if st.button(" Générer un rapport complet", key="generate_report_unique"):
+            st.session_state.show_report = True
+        
+        # Afficher le rapport si demandé
+        if st.session_state.show_report:
+            with st.expander(" Rapport d'optimisation", expanded=True):
+                st.markdown(f"""
+                ## Rapport d'Optimisation de Portefeuille
+                
+                **Date:** {datetime.today().strftime('%Y-%m-%d')}
+                
+                ### Paramètres
+                - Actifs analysés: {', '.join(tickers)}
+                - Période historique: {years} ans
+                - Taux sans risque: {risk_free_rate*100:.2f}%
+                - Niveau de confiance VaR: {confidence_level*100:.0f}%
+                
+                ### Résultats de l'optimisation
+                - **Ratio de Sharpe:** {sharpe_opt:.4f}
+                - **Rendement attendu annuel:** {rendement*100:.2f}%
+                - **Volatilité annuelle:** {volatilite*100:.2f}%
+                - **VaR ({confidence_level*100:.0f}%) 1 jour:** {var_1d*100:.2f}%
+                - **TVaR ({confidence_level*100:.0f}%) 1 jour:** {tvar_1d*100:.2f}%
+                
+                ### Allocation optimale
+                """)
+                
+                st.dataframe(results_df.style.format({
+                    'Weight': '{:.4f}',
+                    'Weight_%': '{:.2f}%',
+                    'Annual_Return_%': '{:.2f}%',
+                    'Risk_Contribution_%': '{:.2f}%'
+                }))
+
 # ==================== STREAMLIT UI ====================
 st.title("🏦 DeepAlloc Portfolio Optimizer")
 st.markdown("---")
+
+# Initialiser l'état de la session
+if 'optimization_complete' not in st.session_state:
+    st.session_state.optimization_complete = False
+if 'show_report' not in st.session_state:
+    st.session_state.show_report = False
+if 'optimization_results' not in st.session_state:
+    st.session_state.optimization_results = None
 
 # Sidebar pour les paramètres
 with st.sidebar:
@@ -158,13 +476,31 @@ with st.sidebar:
     st.subheader("Paramètres Deep Learning")
     n_iterations = st.slider("Nombre d'itérations", 500, 5000, 1000, step=500)
     
+    # Bouton d'optimisation - stocke les paramètres dans session_state
     if st.button(" Lancer l'optimisation", type="primary"):
-        st.session_state.run_optimization = True
-    else:
-        st.session_state.run_optimization = False
+        # Stocker tous les paramètres
+        st.session_state.optimization_params = {
+            'tickers': tickers,
+            'years': years,
+            'risk_free_rate': risk_free_rate,
+            'confidence_level': confidence_level,
+            'n_iterations': n_iterations
+        }
+        st.session_state.optimization_complete = False
+        st.session_state.optimization_results = None
+        st.session_state.show_report = False
+        # Utiliser st.rerun() pour forcer le rechargement
+        st.rerun()
 
-# Main content
-if tickers and st.session_state.get('run_optimization', False):
+# Main content - Vérifier si on doit exécuter l'optimisation
+if 'optimization_params' in st.session_state and not st.session_state.optimization_complete:
+    params = st.session_state.optimization_params
+    tickers = params['tickers']
+    years = params['years']
+    risk_free_rate = params['risk_free_rate']
+    confidence_level = params['confidence_level']
+    n_iterations = params['n_iterations']
+    
     try:
         # Section de chargement
         with st.spinner(f"Téléchargement des données pour {len(tickers)} actifs..."):
@@ -185,6 +521,9 @@ if tickers and st.session_state.get('run_optimization', False):
                 st.stop()
             
             daily_returns = np.log(data / data.shift(1)).dropna()
+            
+            # Stocker dans session_state pour les graphiques
+            st.session_state.daily_returns = daily_returns
             
             cumulative_returns = daily_returns.cumsum()
             st.subheader("📈 Evolution historique des différents actifs")
@@ -229,337 +568,61 @@ if tickers and st.session_state.get('run_optimization', False):
             
             # Calcul VaR et TVaR
             var_1d, tvar_1d = calculate_var_tvar(daily_returns.values, poids_opt, confidence_level)
-            var_annual = var_1d * np.sqrt(252)
-            tvar_annual = tvar_1d * np.sqrt(252)
             
-            # ==================== AFFICHAGE DES RÉSULTATS ====================
-            st.success("Optimisation terminée!")
+            # STOCKER TOUS LES RÉSULTATS DANS SESSION_STATE
+            st.session_state.optimization_results = {
+                'tickers': tickers,
+                'years': years,
+                'risk_free_rate': risk_free_rate,
+                'confidence_level': confidence_level,
+                'daily_returns': daily_returns,
+                'rendements_moyens': rendements_moyens,
+                'matrice_cov': matrice_cov,
+                'poids_opt': poids_opt,
+                'sharpe_opt': sharpe_opt,
+                'rendement': rendement,
+                'volatilite': volatilite,
+                'var_1d': var_1d,
+                'tvar_1d': tvar_1d,
+                'data': data
+            }
             
-            # Métriques principales
-            col1, col2, col3, col4, col5 = st.columns(5)
+            st.session_state.optimization_complete = True
             
-            with col1:
-                st.metric("Sharpe Ratio", f"{sharpe_opt:.4f}")
-            with col2:
-                st.metric("Rendement annuel", f"{rendement*100:.2f}%")
-            with col3:
-                st.metric("Volatilité annuelle", f"{volatilite*100:.2f}%")
-            with col4:
-                st.metric(f"VaR ({confidence_level*100:.0f}%) 1 jour", f"{var_1d*100:.2f}%")
-            with col5:
-                st.metric(f"TVaR ({confidence_level*100:.0f}%) 1 jour", f"{tvar_1d*100:.2f}%")
-            
-            st.markdown("---")
-            
-            # Layout en colonnes
-            left_col, right_col = st.columns([1, 1])
-            
-            with left_col:
-                # Tableau des poids
-                st.subheader(" Distribution du portefeuille")
-                
-                weights_df = pd.DataFrame({
-                    'Actif': tickers,
-                    'Poids (%)': poids_opt * 100,
-                    'Rendement (%)': rendements_moyens.values * 100
-                })
-                
-                # Trier par poids décroissant
-                weights_df = weights_df.sort_values('Poids (%)', ascending=False)
-                
-                # Afficher le tableau
-                st.dataframe(
-                    weights_df.style.format({
-                        'Poids (%)': '{:.2f}%',
-                        'Rendement (%)': '{:.2f}%'
-                    }),
-                    use_container_width=True
-                )
-                
-                # Pie chart avec Plotly
-                st.subheader(" Répartition du portefeuille")
-                
-                fig_pie = px.pie(
-                    weights_df,
-                    values='Poids (%)',
-                    names='Actif',
-                    hole=0.3,
-                    color_discrete_sequence=px.colors.qualitative.Set3
-                )
-                fig_pie.update_traces(textposition='inside', textinfo='percent+label')
-                fig_pie.update_layout(height=400)
-                st.plotly_chart(fig_pie, use_container_width=True)
-            
-            with right_col:
-                # Efficient Frontier avec Plotly
-                st.subheader("Frontière Efficiente")
-                
-                with st.spinner("Génération de la frontière efficiente..."):
-                    rendements_pf, volatilites_pf, sharpes_pf, all_weights = generate_efficient_frontier(
-                        rendements_moyens.values,
-                        matrice_cov.values,
-                        risk_free_rate,
-                        n_portfolios=3000
-                    )
-                
-                # Création du scatter plot
-                fig = go.Figure()
-                
-                # Tous les portefeuilles
-                fig.add_trace(go.Scatter(
-                    x=volatilites_pf,
-                    y=rendements_pf,
-                    mode='markers',
-                    marker=dict(
-                        size=8,
-                        color=sharpes_pf,
-                        colorscale='Viridis',
-                        showscale=True,
-                        colorbar=dict(title="Sharpe Ratio")
-                    ),
-                    name='Portefeuilles aléatoires',
-                    hovertemplate='<b>Volatilité:</b> %{x:.3f}<br>' +
-                                 '<b>Rendement:</b> %{y:.3f}<br>' +
-                                 '<b>Sharpe:</b> %{marker.color:.3f}<extra></extra>'
-                ))
-                
-                # Portefeuille optimal (DL)
-                fig.add_trace(go.Scatter(
-                    x=[volatilite],
-                    y=[rendement],
-                    mode='markers',
-                    marker=dict(
-                        size=20,
-                        color='red',
-                        symbol='star',
-                        line=dict(width=2, color='black')
-                    ),
-                    name='Portefeuille Optimal (DL)',
-                    hovertemplate='<b>Portefeuille Optimal</b><br>' +
-                                 '<b>Volatilité:</b> %{x:.3f}<br>' +
-                                 '<b>Rendement:</b> %{y:.3f}<br>' +
-                                 '<b>Sharpe:</b> ' + f'{sharpe_opt:.3f}<extra></extra>'
-                ))
-                
-                # Portefeuille à volatilité minimale
-                idx_min_vol = np.argmin(volatilites_pf)
-                fig.add_trace(go.Scatter(
-                    x=[volatilites_pf[idx_min_vol]],
-                    y=[rendements_pf[idx_min_vol]],
-                    mode='markers',
-                    marker=dict(
-                        size=15,
-                        color='green',
-                        symbol='triangle-up',
-                        line=dict(width=2, color='black')
-                    ),
-                    name='Volatilité minimale',
-                    hovertemplate='<b>Volatilité minimale</b><br>' +
-                                 '<b>Volatilité:</b> %{x:.3f}<br>' +
-                                 '<b>Rendement:</b> %{y:.3f}<extra></extra>'
-                ))
-                
-                # Portefeuille à Sharpe maximum (Monte Carlo)
-                idx_max_sharpe = np.argmax(sharpes_pf)
-                fig.add_trace(go.Scatter(
-                    x=[volatilites_pf[idx_max_sharpe]],
-                    y=[rendements_pf[idx_max_sharpe]],
-                    mode='markers',
-                    marker=dict(
-                        size=15,
-                        color='blue',
-                        symbol='square',
-                        line=dict(width=2, color='black')
-                    ),
-                    name='Sharpe max (MC)',
-                    hovertemplate='<b>Sharpe max (MC)</b><br>' +
-                                 '<b>Volatilité:</b> %{x:.3f}<br>' +
-                                 '<b>Rendement:</b> %{y:.3f}<extra></extra>'
-                ))
-                
-                # Mise en forme
-                fig.update_layout(
-                    title='Frontière Efficiente',
-                    xaxis_title='Volatilité annuelle',
-                    yaxis_title='Rendement annuel',
-                    hovermode='closest',
-                    height=500,
-                    showlegend=True,
-                    legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01)
-                )
-                
-                st.plotly_chart(fig, use_container_width=True)
-            
-            # Section supplémentaire : Distribution des rendements et VaR
-            st.markdown("---")
-            st.subheader("Analyse des risques")
-            
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                # Distribution des rendements du portefeuille
-                portfolio_returns = daily_returns.values @ poids_opt
-                
-                fig_dist = go.Figure()
-                fig_dist.add_trace(go.Histogram(
-                    x=portfolio_returns * 100,
-                    nbinsx=50,
-                    name='Rendements',
-                    marker_color='skyblue',
-                    opacity=0.7
-                ))
-                
-                # Ligne VaR
-                fig_dist.add_vline(
-                    x=var_1d * 100,
-                    line_dash="dash",
-                    line_color="red",
-                    annotation_text=f"VaR {confidence_level*100:.0f}%: {var_1d*100:.2f}%",
-                    annotation_position="top right"
-                )
-                
-                fig_dist.update_layout(
-                    title='Distribution des rendements quotidiens',
-                    xaxis_title='Rendement quotidien (%)',
-                    yaxis_title='Fréquence',
-                    height=400
-                )
-                st.plotly_chart(fig_dist, use_container_width=True)
-            
-            with col2:
-                # Matrice de corrélation
-                st.subheader(" Matrice de corrélation")
-                
-                corr_matrix = daily_returns.corr()
-                
-                fig_corr = px.imshow(
-                    corr_matrix,
-                    text_auto='.2f',
-                    aspect="auto",
-                    color_continuous_scale='RdBu_r',
-                    zmin=-1,
-                    zmax=1
-                )
-                fig_corr.update_layout(height=400)
-                st.plotly_chart(fig_corr, use_container_width=True)
-            
-            # Téléchargement des résultats
-            st.markdown("---")
-            st.subheader("Exporter les résultats")
-            
-            # Créer un DataFrame avec tous les résultats
-            results_df = pd.DataFrame({
-                'Asset': tickers,
-                'Weight': poids_opt,
-                'Weight_%': poids_opt * 100,
-                'Annual_Return_%': rendements_moyens.values * 100,
-                'Risk_Contribution_%': (poids_opt * np.diag(matrice_cov.values) / volatilite**2) * 100
-            })
-            
-            # Métriques globales
-            summary_metrics = pd.DataFrame({
-                'Metric': ['Sharpe Ratio', 'Annual Return %', 'Annual Volatility %', 
-                          f'VaR 1d ({confidence_level*100:.0f}%)', f'TVaR 1d ({confidence_level*100:.0f}%)',
-                          'Number of Assets', 'Investment Period (years)'],
-                'Value': [sharpe_opt, rendement*100, volatilite*100, 
-                         var_1d*100, tvar_1d*100, len(tickers), years]
-            })
-            
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                st.download_button(
-                    label=" Télécharger les poids",
-                    data=results_df.to_csv(index=False),
-                    file_name="portfolio_weights.csv",
-                    mime="text/csv"
-                )
-            
-            with col2:
-                st.download_button(
-                    label="Télécharger les métriques",
-                    data=summary_metrics.to_csv(index=False),
-                    file_name="portfolio_metrics.csv",
-                    mime="text/csv"
-                )
-            
-            with col3:
-                # Générer un rapport
-                if st.button(" Générer un rapport complet"):
-                    with st.expander(" Rapport d'optimisation"):
-                        st.markdown(f"""
-                        ## Rapport d'Optimisation de Portefeuille
-                        
-                        **Date:** {datetime.today().strftime('%Y-%m-%d')}
-                        
-                        ### Paramètres
-                        - Actifs analysés: {', '.join(tickers)}
-                        - Période historique: {years} ans
-                        - Taux sans risque: {risk_free_rate*100:.2f}%
-                        - Niveau de confiance VaR: {confidence_level*100:.0f}%
-                        
-                        ### Résultats de l'optimisation
-                        - **Ratio de Sharpe:** {sharpe_opt:.4f}
-                        - **Rendement attendu annuel:** {rendement*100:.2f}%
-                        - **Volatilité annuelle:** {volatilite*100:.2f}%
-                        - **VaR ({confidence_level*100:.0f}%) 1 jour:** {var_1d*100:.2f}%
-                        - **TVaR ({confidence_level*100:.0f}%) 1 jour:** {tvar_1d*100:.2f}%
-                        
-                        ### Allocation optimale
-                        """)
-                        
-                        st.dataframe(results_df.style.format({
-                            'Weight': '{:.4f}',
-                            'Weight_%': '{:.2f}%',
-                            'Annual_Return_%': '{:.2f}%',
-                            'Risk_Contribution_%': '{:.2f}%'
-                        }))
+            # Afficher les résultats
+            display_results()
             
     except Exception as e:
         st.error(f"Une erreur s'est produite: {str(e)}")
         st.info("Veuillez vérifier les symboles des actifs et réessayer.")
+
+# Si l'optimisation est déjà terminée, juste afficher les résultats
+elif st.session_state.optimization_complete and st.session_state.optimization_results:
+    display_results()
+
 else:
     # Page d'accueil
-    if not st.session_state.get('run_optimization', False):
-        st.markdown("""
-        ## Bienvenue dans l'optimiseur de portefeuille avec Deep Learning!
-        
-        ###  Fonctionnalités:
-        1. **Optimisation par Deep Learning** - Utilise un réseau neuronal pour trouver la meilleure allocation
-        2. **Analyse de risque** - Calcul de la VaR (Value at Risk) et TVaR (Conditional VaR)
-        3. **Frontière efficiente** - Visualisation interactive des portefeuilles optimaux
-        4. **Gestion multi-actifs** - Analysez jusqu'à 20 actifs simultanément
-        
-        ###  Comment utiliser:
-        1. Dans la barre latérale, entrez les symboles des actifs (ex: AAPL, TSLA, GOOGL)
-        2. Ajustez les paramètres selon vos besoins
-        3. Cliquez sur "🚀 Lancer l'optimisation"
-        
-        ###  Exemples de symboles:
-        - Actions: AAPL, MSFT, GOOGL, AMZN, TSLA
-        - ETFs: SPY, QQQ, VTI, BND, GLD
-        - Crypto: BTC-USD, ETH-USD (si disponible)
-        
-        **Note:** Les données sont récupérées via Yahoo Finance.
-        """)
-        
-        # Exemples rapides
-        st.subheader(" Exemples rapides")
-        
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            if st.button("Portefeuille actions US", use_container_width=True):
-                st.session_state.run_optimization = True
-                # Cette partie nécessiterait une mise à jour de l'état
-        
-        with col2:
-            if st.button("Portefeuille équilibré", use_container_width=True):
-                st.session_state.run_optimization = True
-        
-        with col3:
-            if st.button("Portefeuille diversifié", use_container_width=True):
-                st.session_state.run_optimization = True
+    st.markdown("""
+    ## Bienvenue dans l'optimiseur de portefeuille avec Deep Learning!
+    
+    ###  Fonctionnalités:
+    1. **Optimisation par Deep Learning** - Utilise un réseau neuronal pour trouver la meilleure allocation
+    2. **Analyse de risque** - Calcul de la VaR (Value at Risk) et TVaR (Conditional VaR)
+    3. **Frontière efficiente** - Visualisation interactive des portefeuilles optimaux
+    4. **Gestion multi-actifs** - Analysez jusqu'à 20 actifs simultanément
+    
+    ###  Comment utiliser:
+    1. Dans la barre latérale, entrez les symboles des actifs (ex: AAPL, TSLA, GOOGL)
+    2. Ajustez les paramètres selon vos besoins
+    3. Cliquez sur "🚀 Lancer l'optimisation"
+    
+    ###  Exemples de symboles:
+    - Actions: AAPL, MSFT, GOOGL, AMZN, TSLA
+    - ETFs: SPY, QQQ, VTI, BND, GLD
+    - Crypto: BTC-USD, ETH-USD (si disponible)
+    
+    **Note:** Les données sont récupérées via Yahoo Finance.
+    """)
 
 # Footer
 st.markdown("---")
